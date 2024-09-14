@@ -170,7 +170,7 @@ local merge_frontmatter = function(line_iterator, note, buf, opts)
   frontmatter[#frontmatter + 1] = "---"
   local template_as_note = Note.from_lines(iter(frontmatter), note.path, opts)
   note:frontmatter_lines()
-  if note.metadata == null then
+  if not note.metadata then
     note.metadata = {}
   end
   for key in iter(template_as_note.metadata) do
