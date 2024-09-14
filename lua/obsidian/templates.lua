@@ -153,16 +153,17 @@ end
 --- Reads line from line_iterator and appends the frontmatter to the passed note
 --- Returns remaining content of the line_iterator and the size of frontmatter
 ---@param line_iterator fun(): string?
----@param note obisidan.Note -- Note created from buffer
 ---@param buf integer -- buffer id of the opened buffer
 ---@param opts { template_name: string|obsidian.Path, client: obsidian.Client, location: { [1]: integer, [2]: integer, [3]: integer, [4]: integer } } Options.
 ---@return integer -- Total lines of frontmatter
 ---@return table -- Remaining content of passed iterator excluding frontmatter
 ---
 
-local merge_frontmatter = function(line_iterator, note, buf, opts)
+local merge_frontmatter = function(line_iterator, buf, opts)
   local data = {}
+  local note = Note.from_buffer(buf)
   local frontmatter_end = 0
+  local manage_frontmatter = opts.client:should_save_frontmatter(note)
   local content_start
   local in_frontmatter, has_frontmatter, first_line = false, false, true
   for line in line_iterator do
@@ -184,25 +185,29 @@ local merge_frontmatter = function(line_iterator, note, buf, opts)
       content_start = frontmatter_end + 1
     end
   end
-  if has_frontmatter == false and frontmatter_end > 0 then
-    error "Template has invalid frontmatter!"
+  if manage_frontmatter then
+    if has_frontmatter == false and frontmatter_end > 0 then
+      error "Template has invalid frontmatter!"
+    end
+    local template_as_note = Note.from_lines(iter { unpack(data, 1, frontmatter_end) }, note.path, opts)
+    if not note.metadata then
+      note.metadata = {}
+    end
+    for key in iter(template_as_note.metadata) do
+      note.metadata[key] = template_as_note[key]
+    end
+    for key in iter(template_as_note.tags) do
+      note:add_tag(key)
+    end
+    local insert_lines = compat.flatten(note:frontmatter_lines(false))
+    if has_frontmatter then
+      vim.api.nvim_buf_set_lines(buf, 0, frontmatter_end, false, {})
+    end
+    vim.api.nvim_buf_set_lines(buf, 0, 0, false, insert_lines)
+    return content_start, { unpack(data, content_start, #data) }
+  else
+    return nil, data
   end
-  local template_as_note = Note.from_lines(iter { unpack(data, 1, frontmatter_end) }, note.path, opts)
-  if not note.metadata then
-    note.metadata = {}
-  end
-  for key in iter(template_as_note.metadata) do
-    note.metadata[key] = template_as_note[key]
-  end
-  for key in iter(template_as_note.tags) do
-    note:add_tag(key)
-  end
-  local insert_lines = compat.flatten(note:frontmatter_lines(false))
-  if has_frontmatter then
-    vim.api.nvim_buf_set_lines(buf, 0, frontmatter_end, false, {})
-  end
-  vim.api.nvim_buf_set_lines(buf, 0, 0, false, insert_lines)
-  return content_start, { unpack(data, content_start, #data) }
 end
 
 ---Insert a template at the given location.
@@ -212,14 +217,13 @@ end
 ---@return obsidian.Note
 M.insert_template = function(opts)
   local buf, win, row, _ = unpack(opts.location)
-  local note = Note.from_buffer(buf)
   local template_path = resolve_template(opts.template_name, opts.client)
   local insert_lines = {}
   local template_file = io.open(tostring(template_path), "r")
   if template_file then
     local lines = template_file:lines()
-    local content_start, data = merge_frontmatter(lines, note, buf,opts)
-    row = content_start
+    local content_start, data = merge_frontmatter(lines, buf, opts)
+    row = content_start or row - 1
     for line in iter(data) do
       if string.find(line, "[\r\n]") then
         local line_start = 1
